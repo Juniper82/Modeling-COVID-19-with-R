@@ -194,12 +194,51 @@ plot((PA.dat$Day^power-1)/power , PA.dat$new.cases.PA,main = 'PA Model 1 with Pr
 prediction.days <- (PA.verify.dat$Day^power-1)/power
 PA.prediction <- Yhat(y.int,slop,PA.verify.dat$Day,power)
 points(prediction.days, PA.prediction, pch=16,col='red')
-sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[1],PA.verify.dat$new.cases[1])
-sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[1],prediction[1])
-sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[2],PA.verify.dat$new.cases[2])
-sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[2],prediction[2])
-sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[3],PA.verify.dat$new.cases[3])
-sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[3],prediction[3])
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[1],PA.verify.dat$new.cases.PA[1])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[1],PA.prediction[1])
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[2],PA.verify.dat$new.cases.PA[2])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[2],PA.prediction[2])
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[3],PA.verify.dat$new.cases.PA[3])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[3],PA.prediction[3])
 ```
 
 
+### Create weighted model for entire state of Pennsylvania
+```{r}
+summary(PA.model1[[1]])
+model1 = PA.model1[[1]]
+residMod1 <- abs(resid(model1))
+model2=lm(residMod1~modelDat$Xdat)
+fitted=fitted(model2)
+
+weight=(1/(fitted*fitted))
+
+wls=lm(modelDat$new.cases~modelDat$Xdat, weights=weight)
+summary(wls)
+#plot(wls)
+plot(modelDat$Xdat,modelDat$new.cases.PA)
+abline(wls)
+
+power <- PA.model1[[2]][[3]]
+# get summary and plots of fit
+layout(matrix(1:4,2,2))
+plot(wls) 
+par(mfrow=c(1,1))
+# 
+# # Make predictions
+# Yhat <- function(B0,B1,day,p){B0+B1*(day^p-1)/p}
+# 
+y.int <- wls$coefficients[1]
+slop <- wls$coefficients[2]
+# 
+plot((PA.dat$Day^power-1)/power , PA.dat$new.cases.PA,main = 'PA WLS Model with Predictions')
+prediction.days <- (PA.verify.dat$Day^power-1)/power
+PA.prediction.wls <- Yhat(y.int,slop,PA.verify.dat$Day,power)
+points(prediction.days, PA.prediction.wls, pch=16,col='red')
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[1],PA.verify.dat$new.cases.PA[1])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[1],PA.prediction.wls[1])
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[2],PA.verify.dat$new.cases.PA[2])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[2],PA.prediction.wls[2])
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[3],PA.verify.dat$new.cases.PA[3])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[3],PA.prediction.wls[3])
+```
