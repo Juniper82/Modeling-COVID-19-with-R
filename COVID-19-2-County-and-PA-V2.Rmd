@@ -1,0 +1,353 @@
+---
+title: "Predicting COVID-19 with Multiple Linear Regression"
+author: "Scott Dolan"
+date: "12/6/2020"
+output: 
+  html_document:
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+
+# Clear plots
+if(!is.null(dev.list())) dev.off()
+# Clear console
+cat("\014") 
+# Clean workspace
+rm(list=ls())
+
+# Set Path
+# Scott Path
+path = '/home/scott/GIT/Modeling-COVID-19-with-R/'
+
+# Zack Path
+# path = ''
+
+require("knitr")
+opts_knit$set(root.dir = path)
+```
+
+
+
+### Load data and select desired desired data 
+```{r}
+rawdata <- read_csv('PA-COVID-19-Data-Merged.csv')
+
+
+berks.dat <- rawdata %>% dplyr::filter(.,County == 'Berks' & Date >= '2020-06-01')
+date_as_factor.berks <- data.frame(Day=c(1:length(unique(berks.dat$Date))),Date=unique(berks.dat$Date))
+berks.dat <- berks.dat %>% left_join(.,date_as_factor.berks,by=c("Date"))
+berks.model.dat <- berks.dat %>% dplyr::filter(.,Date <= '2020-12-15')
+berks.verify.dat <- berks.dat %>% dplyr::filter(.,Date > '2020-12-15')
+
+
+philly.dat <- rawdata %>% dplyr::filter(.,County == 'Philadelphia' & Date >= '2020-06-01')
+date_as_factor.philly <- data.frame(Day=c(1:length(unique(philly.dat$Date))),Date=unique(philly.dat$Date))
+philly.dat <- philly.dat %>% left_join(.,date_as_factor.philly,by=c("Date"))
+philly.model.dat <- philly.dat %>% dplyr::filter(.,Date <= '2020-12-15')
+philly.verify.dat <- philly.dat %>% dplyr::filter(.,Date > '2020-12-15')
+```
+### Berks County model 1 using linear regression and power transformation
+```{r}
+# DV  : # of New Cases
+# IVs : Day
+
+getMod = function(df){
+  p = seq(0,4,0.01)
+  Rsquare_p = c(0,0,0,0)
+  p.value <- 1
+  model = list(NULL)
+  for(i in c(2:length(p))){
+
+    modDat <- df %>%  dplyr::mutate(., Xdat = (Day^p[i]-1)/p[i]) %>% drop_na()
+    fit <- modDat %>% lm(new.cases ~ Xdat,.)
+    sumFit <- summary(fit)
+    f <- sumFit$fstatistic
+    p.value.fit <- pf(f[1],f[2],f[3],lower.tail=F)
+    if(sumFit$adj.r.squared > Rsquare_p[2] & p.value.fit < p.value){
+      Rsquare_p <- c(sumFit$r.squared,sumFit$adj.r.squared,p[i],i)
+      model <- fit
+      p.value <- p.value.fit
+      model.sum <- sumFit
+    }
+  }
+  if(is_empty(model)==TRUE){
+      print('Search higher power')
+      Rsquare_p <- c(sumFit$r.squared,sumFit$adj.r.squared,p[i],i)
+      model <- fit
+      p.value <- p.value.fit
+      model.sum <- sumFit
+  }
+
+  return(list(model,Rsquare_p,modDat$Day,p.value,model.sum))
+}
+berks.model1 <- getMod(berks.model.dat)
+```
+
+#### Explore model 1 for Berks County using linear regression (unweighted)
+```{r}
+summary(berks.model1[[1]])
+model1 = berks.model1[[1]]
+modelDat <- data.frame(model1$model)
+power <- berks.model1[[2]][[3]]
+plot(modelDat$Xdat,modelDat$new.cases,main = 'Model 1 for Berks County PA')
+abline(model1)
+
+# get summary and plots of fit
+layout(matrix(1:4,2,2))
+plot(model1) 
+par(mfrow=c(1,1))
+
+# Make predictions
+Yhat <- function(B0,B1,day,p){B0+B1*(day^p-1)/p}
+
+y.int <- model1$coefficients[1]
+slop <- model1$coefficients[2]
+berks.prediction <- Yhat(y.int,slop,berks.verify.dat$Day,power)
+plot((berks.dat$Day^power-1)/power , berks.dat$new.cases,main = 'Berks Model1 with Predictions')
+prediction.days <- (berks.verify.dat$Day^power-1)/power
+prediction <- Yhat(y.int,slop,berks.verify.dat$Day,power)
+points(prediction.days, prediction, pch=16,col='red')
+sprintf('Acutal new case count for %s was %.2f',berks.verify.dat$Date[1],berks.verify.dat$new.cases[1])
+sprintf('Predicted new case count for %s was %.2f',berks.verify.dat$Date[1],prediction[1])
+sprintf('Acutal new case count for %s was %.2f',berks.verify.dat$Date[2],berks.verify.dat$new.cases[2])
+sprintf('Predicted new case count for %s was %.2f',berks.verify.dat$Date[2],prediction[2])
+sprintf('Acutal new case count for %s was %.2f',berks.verify.dat$Date[3],berks.verify.dat$new.cases[3])
+sprintf('Predicted new case count for %s was %.2f',berks.verify.dat$Date[3],prediction[3])
+```
+
+### Berks County model 2 with non-linear regression (weighted)
+```{r}
+residMod1 <- abs(resid(model1))
+model2=lm(residMod1~modelDat$Xdat)
+fitted=fitted(model2)
+
+weight=(1/(fitted*fitted))
+
+wls=lm(modelDat$new.cases~modelDat$Xdat, weights=weight)
+summary(wls)
+
+model2.berks <- wls
+summary(model2.berks)
+layout(matrix(1:4,2,2))
+plot(model2.berks) 
+par(mfrow=c(1,1))
+model2 <- model2.berks$model
+plot(model2$`modelDat$Xdat`,model2$`modelDat$new.cases`)
+abline(model2.berks)
+y.int2 <- model2.berks$coefficients[1]
+slop2 <- model2.berks$coefficients[2]
+berks.prediction <- Yhat(y.int,slop,berks.verify.dat$Day,power)
+plot((berks.dat$Day^power-1)/power , berks.dat$new.cases,main = 'Berks Model1 with Predictions')
+prediction.days <- (berks.verify.dat$Day^power-1)/power
+prediction <- Yhat(y.int2,slop2,berks.verify.dat$Day,power)
+points(prediction.days, prediction, pch=16,col='red')
+sprintf('Acutal new case count for %s was %.2f',berks.verify.dat$Date[1],berks.verify.dat$new.cases[1])
+sprintf('Predicted new case count for %s was %.2f',berks.verify.dat$Date[1],prediction[1])
+sprintf('Acutal new case count for %s was %.2f',berks.verify.dat$Date[2],berks.verify.dat$new.cases[2])
+sprintf('Predicted new case count for %s was %.2f',berks.verify.dat$Date[2],prediction[2])
+sprintf('Acutal new case count for %s was %.2f',berks.verify.dat$Date[3],berks.verify.dat$new.cases[3])
+sprintf('Predicted new case count for %s was %.2f',berks.verify.dat$Date[3],prediction[3])
+```
+
+### Philadelphia County model 1 using linear regression and power transformation
+```{r}
+# DV  : # of New Cases
+# IVs : Day
+
+getMod = function(df){
+  p = seq(0,10,0.01)
+  Rsquare_p = c(0,0,0,0)
+  p.value <- 1
+  model = list(NULL)
+  for(i in c(2:length(p))){
+
+    modDat <- df %>%  dplyr::mutate(., Xdat = (Day^p[i]-1)/p[i]) %>% drop_na()
+    fit <- modDat %>% lm(new.cases ~ Xdat,.)
+    sumFit <- summary(fit)
+    f <- sumFit$fstatistic
+    p.value.fit <- pf(f[1],f[2],f[3],lower.tail=F)
+    if(sumFit$adj.r.squared > Rsquare_p[2] & p.value.fit < p.value){
+      Rsquare_p <- c(sumFit$r.squared,sumFit$adj.r.squared,p[i],i)
+      model <- fit
+      p.value <- p.value.fit
+      model.sum <- sumFit
+    }
+  }
+  if(is_empty(model)==TRUE){
+      print('Search higher power')
+      Rsquare_p <- c(sumFit$r.squared,sumFit$adj.r.squared,p[i],i)
+      model <- fit
+      p.value <- p.value.fit
+      model.sum <- sumFit
+  }
+
+  return(list(model,Rsquare_p,modDat$Day,p.value,model.sum))
+}
+philly.model1 <- getMod(philly.model.dat)
+```
+
+#### Explore model 1 for Philadelphia County using linear regression (unweighted)
+```{r}
+summary(philly.model1[[1]])
+model1 = philly.model1[[1]]
+modelDat <- data.frame(model1$model)
+power <- philly.model1[[2]][[3]]
+plot(modelDat$Xdat,modelDat$new.cases,main = 'Model 1 for Philadelphia County PA')
+abline(model1)
+
+# get summary and plots of fit
+layout(matrix(1:4,2,2))
+plot(model1) 
+par(mfrow=c(1,1))
+
+# Make predictions
+Yhat <- function(B0,B1,day,p){B0+B1*(day^p-1)/p}
+
+y.int <- model1$coefficients[1]
+slop <- model1$coefficients[2]
+philly.prediction <- Yhat(y.int,slop,philly.verify.dat$Day,power)
+plot((philly.dat$Day^power-1)/power , philly.dat$new.cases,main = 'Philadelphia Model1 with Predictions')
+prediction.days <- (philly.verify.dat$Day^power-1)/power
+prediction <- Yhat(y.int,slop,philly.verify.dat$Day,power)
+points(prediction.days, prediction, pch=16,col='red')
+sprintf('Acutal new case count for %s was %.2f',philly.verify.dat$Date[1],philly.verify.dat$new.cases[1])
+sprintf('Predicted new case count for %s was %.2f',philly.verify.dat$Date[1],prediction[1])
+sprintf('Acutal new case count for %s was %.2f',philly.verify.dat$Date[2],philly.verify.dat$new.cases[2])
+sprintf('Predicted new case count for %s was %.2f',philly.verify.dat$Date[2],prediction[2])
+sprintf('Acutal new case count for %s was %.2f',philly.verify.dat$Date[3],philly.verify.dat$new.cases[3])
+sprintf('Predicted new case count for %s was %.2f',philly.verify.dat$Date[3],prediction[3])
+```
+
+
+### Create model for entire state of Pennsylvania
+```{r}
+# To model the state, parameters need to be combined for a state total for each day
+start.date <- '2020-06-01'
+end.date <- '2020-12-15'
+
+PA.dat <- rawdata %>%   dplyr::filter(Date >= as.Date(start.date)) %>% drop_na() 
+Pa.date_as_factor <- data.frame(Day=c(1:length(unique(PA.dat$Date))),Date=unique(PA.dat$Date))
+PA.dat <- PA.dat %>% left_join(.,Pa.date_as_factor,by=c("Date")) %>% group_by(.,Day) %>% dplyr::mutate(.,Date=unique(Date),Day= Day,new.cases.PA = sum(new.cases), daily.death.count.PA = sum(daily.death.count), patients.hospitalized.PA = sum(patients.hospitalized), patients.on.ventilators.PA = sum(patients.on.ventilators), population.2018.PA = sum(population.2018), airborn.isolation.beds.PA = sum(airborn.isolation.beds), adult.ICU.beds.PA = sum(adult.ICU.beds)) %>% dplyr::select(.,Date,new.cases.PA, daily.death.count.PA, patients.hospitalized.PA, Day, patients.on.ventilators.PA, airborn.isolation.beds.PA, adult.ICU.beds.PA) %>% unique(.) %>% ungroup(.) 
+
+PA.model.dat <- PA.dat %>% dplyr::filter(Date <= as.Date(end.date))
+PA.verify.dat <- PA.dat %>% dplyr::filter(Date > as.Date(end.date))
+
+```
+
+```{r}
+# Time series model by Day # 
+# DV = # of new cases per day
+# IVS : Day 
+
+getMod = function(df){
+  p = seq(0,10,.1)
+  Rsquare_p = c(0,0,0,0)
+  p.value <- 1
+  model = list(NULL)
+  for(i in c(2:length(p))){
+
+    modDat <- df %>%  dplyr::mutate(., Xdat = (Day^p[i]-1)/p[i]) %>% drop_na()
+    #print(head(modDat))
+    fit <- lm(new.cases.PA ~ Xdat, data = modDat)
+    sumFit <- summary(fit)
+    f <- sumFit$fstatistic
+    p.value.fit <- pf(f[1],f[2],f[3],lower.tail=F)
+    if(sumFit$adj.r.squared > Rsquare_p[2] & p.value.fit < p.value){
+      Rsquare_p <- c(sumFit$r.squared,sumFit$adj.r.squared,p[i],i)
+      model <- fit
+      p.value <- p.value.fit
+      model.sum <- sumFit
+    }
+  }
+  if(is_empty(model)==TRUE){
+      print('Search higher power')
+      Rsquare_p <- c(sumFit$r.squared,sumFit$adj.r.squared,p[i],i)
+      model <- fit
+      p.value <- p.value.fit
+      model.sum <- sumFit
+  }
+
+  return(list(model,Rsquare_p,modDat$Day,p.value,model.sum))
+}
+
+PA.model1 <- getMod(PA.model.dat)
+
+# PA.model <- lm(new.cases.PA ~ Day + daily.death.count.PA + patients.hospitalized.PA + patients.on.ventilators.PA + airborn.isolation.beds.PA + adult.ICU.beds.PA + percent.Democrat.PA + percent.Republican.PA, data = PA.model.dat)
+
+```
+
+#### Explore model 1 for PA
+```{r}
+summary(PA.model1[[1]])
+model1 = PA.model1[[1]]
+modelDat <- data.frame(model1$model)
+power <- PA.model1[[2]][[3]]
+plot(modelDat$Xdat,modelDat$new.cases,main = 'Model 1 for Berks County PA')
+abline(model1)
+# get summary and plots of fit
+layout(matrix(1:4,2,2))
+plot(model1) 
+par(mfrow=c(1,1))
+
+# Make predictions
+Yhat <- function(B0,B1,day,p){B0+B1*(day^p-1)/p}
+
+y.int <- model1$coefficients[1]
+slop <- model1$coefficients[2]
+
+plot((PA.dat$Day^power-1)/power , PA.dat$new.cases.PA,main = 'PA Model 1 with Predictions')
+prediction.days <- (PA.verify.dat$Day^power-1)/power
+PA.prediction <- Yhat(y.int,slop,PA.verify.dat$Day,power)
+points(prediction.days, PA.prediction, pch=16,col='red')
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[1],PA.verify.dat$new.cases.PA[1])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[1],PA.prediction[1])
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[2],PA.verify.dat$new.cases.PA[2])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[2],PA.prediction[2])
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[3],PA.verify.dat$new.cases.PA[3])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[3],PA.prediction[3])
+```
+
+
+### Create weighted model for entire state of Pennsylvania
+```{r}
+summary(PA.model1[[1]])
+model1 = PA.model1[[1]]
+residMod1 <- abs(resid(model1))
+model2=lm(residMod1~modelDat$Xdat)
+fitted=fitted(model2)
+
+weight=(1/(fitted*fitted))
+
+wls=lm(modelDat$new.cases~modelDat$Xdat, weights=weight)
+summary(wls)
+#plot(wls)
+plot(modelDat$Xdat,modelDat$new.cases.PA)
+abline(wls)
+
+power <- PA.model1[[2]][[3]]
+# get summary and plots of fit
+layout(matrix(1:4,2,2))
+plot(wls) 
+par(mfrow=c(1,1))
+# 
+# # Make predictions
+# Yhat <- function(B0,B1,day,p){B0+B1*(day^p-1)/p}
+# 
+y.int <- wls$coefficients[1]
+slop <- wls$coefficients[2]
+# 
+plot((PA.dat$Day^power-1)/power , PA.dat$new.cases.PA,main = 'PA WLS Model with Predictions')
+prediction.days <- (PA.verify.dat$Day^power-1)/power
+PA.prediction.wls <- Yhat(y.int,slop,PA.verify.dat$Day,power)
+points(prediction.days, PA.prediction.wls, pch=16,col='red')
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[1],PA.verify.dat$new.cases.PA[1])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[1],PA.prediction.wls[1])
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[2],PA.verify.dat$new.cases.PA[2])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[2],PA.prediction.wls[2])
+sprintf('Acutal new case count for %s was %.2f',PA.verify.dat$Date[3],PA.verify.dat$new.cases.PA[3])
+sprintf('Predicted new case count for %s was %.2f',PA.verify.dat$Date[3],PA.prediction.wls[3])
+```
